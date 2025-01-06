@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -47,31 +48,31 @@ func FetchRepositories(client *http.Client, config *config.Config, projectName s
 	return fetch[[]types.Repository](client, config, path)
 }
 
-func FetchArtifacts(client *http.Client, config *config.Config, projectName, repoName string) ([]types.TagInfo, error) {
-    var allTags []types.TagInfo
-    pageSize := 10
-    page := 1
-    
-    for {
-        path := fmt.Sprintf("/projects/%s/repositories/%s/artifacts?page=%d&page_size=%d", 
-            projectName, repoName, page, pageSize)
-        tags, err := fetch[[]types.TagInfo](client, config, path)
-        if err != nil {
-            return nil, fmt.Errorf("fetching artifacts page %d: %w", page, err)
-        }
-        
-        if len(tags) == 0 {
-            break
-        }
-        
-        allTags = append(allTags, tags...)
-        if len(tags) < pageSize {
-            break
-        }
-        page++
-    }
-    
-    return allTags, nil
+func FetchArtifacts(client *http.Client, config *config.Config, projectName, repoName string) ([]types.Artifact, error) {
+	var allTags []types.Artifact
+	pageSize := 10
+	page := 1
+
+	for {
+		path := fmt.Sprintf("/projects/%s/repositories/%s/artifacts?page=%d&page_size=%d",
+			projectName, url.PathEscape(repoName), page, pageSize)
+		artifacts, err := fetch[[]types.Artifact](client, config, path)
+		if err != nil {
+			return nil, fmt.Errorf("fetching artifacts page %d: %w", page, err)
+		}
+
+		if len(artifacts) == 0 {
+			break
+		}
+
+		allTags = append(allTags, artifacts...)
+		if len(artifacts) < pageSize {
+			break
+		}
+		page++
+	}
+
+	return allTags, nil
 }
 
 func CheckHarborVersion(client *http.Client, config *config.Config) error {

@@ -51,8 +51,7 @@ func ParseFlags() *Config {
 }
 
 func normalizeHarborURL(url string) string {
-	url = strings.TrimSpace(url) // 去掉首尾空格
-	url = strings.TrimRight(url, "/")
+	url = strings.TrimRight(strings.TrimSpace(url), "/")
 
 	if !strings.HasPrefix(url, "https://") {
 		if strings.HasPrefix(url, "http://") {

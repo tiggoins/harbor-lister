@@ -41,27 +41,27 @@ func NewHarborLister(config *config.Config) *HarborLister {
 }
 
 func (h *HarborLister) List() error {
+	// 检查 Harbor 版本
 	if err := utils.CheckHarborVersion(h.client, h.config); err != nil {
 		return fmt.Errorf("版本检查失败: %v", err)
 	}
 
+	// 获取项目列表
 	projects, err := utils.FetchProjects(h.client, h.config)
 	if err != nil {
 		return fmt.Errorf("获取项目列表失败: %v", err)
 	}
 
 	// 创建带有最大并发数的 goroutine 池
-	semaphore := make(chan struct{}, maxGoroutines) // 控制最大并发数
+	semaphore := make(chan struct{}, maxGoroutines)
 	var wg sync.WaitGroup
 
 	for _, projectInfo := range projects {
-		// 为每个项目启动一个 goroutine
 		wg.Add(1)
 		go func(projectInfo types.Project) {
 			defer wg.Done()
 
 			fmt.Printf("正在处理项目: %s\n", projectInfo.Name)
-
 			project := types.NewProject(projectInfo.Name)
 
 			// 获取仓库列表
@@ -75,47 +75,61 @@ func (h *HarborLister) List() error {
 			for _, repo := range repositories {
 				repoName := strings.TrimPrefix(repo.Name, project.Name+"/")
 
-				// 使用 FetchArtifacts 替换原来的 h.client.GetArtifacts
+				// 获取 Artifact 列表
 				artifacts, err := utils.FetchArtifacts(h.client, h.config, project.Name, repoName)
 				if err != nil {
-					fmt.Printf("警告: 获取仓库 '%s/%s' 的标签失败: %v\n",
+					fmt.Printf("警告: 获取仓库 '%s/%s' 的 Artifact 列表失败: %v\n",
 						project.Name, repoName, err)
 					continue
 				}
 
+				// 构建 Repository
 				repository := &types.Repository{
-					Name: repoName,
-					Tags: make([]*types.TagInfo, 0),
+					Name:     repoName,
+					Artifact: make([]*types.Artifact, 0),
 				}
 
-				// 处理标签
-				for _, tag := range artifacts {
-					if tag.Name != "" {
-						tagInfo := &types.TagInfo{
+				// 处理每个 Artifact
+				for _, artifact := range artifacts {
+					newArtifact := &types.Artifact{
+						Tags: make([]types.TagInfo, 0),
+					}
+
+					// 添加标签到 Artifact
+					for _, tag := range artifact.Tags {
+						newArtifact.Tags = append(newArtifact.Tags, types.TagInfo{
 							Name:     tag.Name,
 							PushTime: tag.PushTime,
-						}
-						repository.AddTag(tagInfo)
+						})
+					}
+
+					// 如果 Artifact 包含标签，则添加到 Repository
+					if len(newArtifact.Tags) > 0 {
+						repository.Artifact = append(repository.Artifact, newArtifact)
 					}
 				}
 
-				// 将仓库添加到项目
-				if len(repository.Tags) > 0 {
+				// 如果 Repository 包含 Artifact，则添加到 Project
+				if len(repository.Artifact) > 0 {
 					project.AddRepository(repository)
 				}
 			}
 
 			// 如果项目包含仓库，则写入数据
 			if len(project.Repositories) > 0 {
-				if err := h.writer.WriteProject(project.Name, project); err != nil {
-					fmt.Printf("写入项目 '%s' 数据失败: %v\n", project.Name, err)
+				if err := h.writer.WriteProject(project); err != nil {
+					fmt.Printf("写入项目 [%s] 数据失败: [%v]\n", project.Name, err)
 					return
 				}
-				fmt.Printf("项目 '%s' 处理完成，包含 %d 个仓库\n",
+				fmt.Printf("项目 [%s] 处理完成，包含 [%d] 个仓库\n",
 					project.Name, len(project.Repositories))
+			} else {
+				fmt.Printf("\033[31m项目 [%s] 处理完成，包含 0 个仓库\033[0m\n",
+					project.Name)
 			}
 
-		}(projectInfo) // 传递项目信息给 goroutine
+			<-semaphore // 释放一个 goroutine 配额
+		}(projectInfo)
 
 		// 控制最大并发数
 		semaphore <- struct{}{}
@@ -126,47 +140,8 @@ func (h *HarborLister) List() error {
 
 	// 保存 Excel 文件
 	if err := h.writer.Save(h.config.OutputFile); err != nil {
-		return fmt.Errorf("保存Excel文件失败: %v", err)
+		return fmt.Errorf("保存 Excel 文件失败: %v", err)
 	}
 
 	return nil
-}
-
-// processProject 现在作为一个辅助方法来处理单个项目
-func (h *HarborLister) processProject(projectName string) (*types.Project, error) {
-	project := types.NewProject(projectName)
-
-	repositories, err := utils.FetchRepositories(h.client, h.config, projectName)
-	if err != nil {
-		return nil, fmt.Errorf("获取仓库列表失败: %v", err)
-	}
-
-	for _, repo := range repositories {
-		repoName := strings.TrimPrefix(repo.Name, projectName+"/")
-		artifacts, err := utils.FetchArtifacts(h.client, h.config, projectName, repoName)
-		if err != nil {
-			continue
-		}
-
-		repository := &types.Repository{
-			Name: repoName,
-			Tags: make([]*types.TagInfo, 0),
-		}
-
-		for _, tag := range artifacts {
-			if tag.Name != "" {
-				tagInfo := &types.TagInfo{
-					Name:     tag.Name,
-					PushTime: tag.PushTime,
-				}
-				repository.AddTag(tagInfo)
-			}
-		}
-
-		if len(repository.Tags) > 0 {
-			project.AddRepository(repository)
-		}
-	}
-
-	return project, nil
 }
